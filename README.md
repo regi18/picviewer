@@ -36,6 +36,15 @@ To make PicViewer your default viewer: in Finder, select a picture, choose Get I
 
 The first time you open a picture, macOS asks whether PicViewer may **control Finder**. Click Allow, because that's how it reads the folder's sort order. You can change this later in System Settings → Privacy & Security → Automation.
 
+### Stop the permission prompts after every rebuild
+
+macOS remembers folder permissions per code signature. Without a developer account the app gets a throwaway (ad-hoc) signature that changes with every build, so macOS treats each build as a new app and asks again. Create a local signing certificate once and every build gets the same signature:
+
+1. Open **Keychain Access** and choose Keychain Access → Certificate Assistant → **Create a Certificate…**
+2. Name it `PicViewer Local`, set Identity Type to **Self-Signed Root** and Certificate Type to **Code Signing**, then click Create.
+3. Double-click the new certificate, open **Trust** and set Code Signing to **Always Trust**.
+4. Rebuild with `sh scripts/build-app.sh --install`. It says `Signed with "PicViewer Local"`. Allow the folder access one last time.
+
 ## Shortcuts
 
 | Key | Action |
@@ -59,7 +68,7 @@ The first time you open a picture, macOS asks whether PicViewer may **control Fi
 - Finder's Group By is ignored; only the sort inside the view is used.
 - Column and gallery views use the saved settings, not the live window.
 - Mirrored HEIC orientations can't be rotated in place, so they're refused.
-- The app has an ad-hoc signature, so macOS may ask for permissions again after a rebuild.
+- Without the `PicViewer Local` certificate, macOS asks for permissions again after every rebuild.
 
 ## For developers
 

@@ -79,8 +79,17 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# Ad-hoc signature so Gatekeeper runs the locally built app without a developer account.
-codesign --force --deep --sign - "$APP"
+# macOS remembers folder permissions per code signature. An ad-hoc signature changes with every build, so each rebuild
+# looks like a new app and the permission prompts come back. A self-signed certificate named "PicViewer Local" in the
+# login keychain keeps the signature stable across builds (see README); without one, fall back to ad-hoc.
+IDENTITY="${PICVIEWER_SIGN_IDENTITY:-PicViewer Local}"
+if security find-identity -p codesigning 2>/dev/null | grep -q "\"$IDENTITY\""; then
+    codesign --force --deep --sign "$IDENTITY" "$APP"
+    echo "Signed with \"$IDENTITY\""
+else
+    codesign --force --deep --sign - "$APP"
+    echo "Signed ad-hoc (no \"$IDENTITY\" certificate): macOS may ask for folder access again after this build"
+fi
 echo "Built $APP"
 
 if [ "${1:-}" = "--install" ]; then
