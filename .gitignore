@@ -1,0 +1,4 @@
+build/
+testpics/
+.build/
+.DS_Store
