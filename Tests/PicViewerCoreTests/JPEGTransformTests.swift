@@ -8,9 +8,8 @@ import XCTest
 /// same coefficients, and anything that cannot be done losslessly must fall back to the orientation tag.
 final class JPEGTransformTests: XCTestCase {
     private var folder: URL!
-    /// Homebrew's jpegtran: /opt/homebrew on Apple Silicon, /usr/local on Intel. The tests that need it skip without it.
-    private let jpegtran = ["/opt/homebrew/bin/jpegtran", "/usr/local/bin/jpegtran"]
-        .first { FileManager.default.isExecutableFile(atPath: $0) } ?? "/opt/homebrew/bin/jpegtran"
+    /// Homebrew's jpegtran. The tests that need it skip without it.
+    private let jpegtran = "/opt/homebrew/bin/jpegtran"
 
     override func setUpWithError() throws {
         folder = FileManager.default.temporaryDirectory.appendingPathComponent("PicViewerJPEG-\(UUID().uuidString)")
@@ -260,7 +259,11 @@ final class JPEGTransformTests: XCTestCase {
         }
         let space = grey ? CGColorSpaceCreateDeviceGray() : CGColorSpace(name: CGColorSpace.sRGB)!
         if grey {
-            let luma = stride(from: 0, to: pixels.count, by: 4).map { pixels[$0] / 3 + pixels[$0 + 1] / 3 + pixels[$0 + 2] / 3 }
+            var luma = [UInt8](repeating: 0, count: width * height)
+            for index in luma.indices {
+                let red = Int(pixels[index * 4]), green = Int(pixels[index * 4 + 1]), blue = Int(pixels[index * 4 + 2])
+                luma[index] = UInt8(red / 3 + green / 3 + blue / 3)
+            }
             let provider = try XCTUnwrap(CGDataProvider(data: Data(luma) as CFData))
             return try XCTUnwrap(CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 8, bytesPerRow: width,
                                          space: space, bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue),

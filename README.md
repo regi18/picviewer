@@ -36,7 +36,7 @@ Preview doesn't step through the pictures in a folder: it only knows the files y
 2. Double-click the zip to unzip it, then drag **PicViewer** into your Applications folder.
 3. Open PicViewer. The first time, macOS says it can't check the app, because it isn't registered with Apple yet. Click Done, then open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to the message about PicViewer. You only need to do this once.
 
-PicViewer needs macOS 14 Sonoma or newer, and runs on both Apple Silicon and Intel Macs.
+PicViewer needs macOS 14 Sonoma or newer on an Apple Silicon Mac.
 
 To make PicViewer your default viewer: in Finder, select a picture, choose Get Info (⌘I), pick PicViewer under **Open with** and click **Change All…**. Do it once for each file type (JPG, RAF, HEIC and so on).
 
@@ -64,7 +64,7 @@ PicViewer is a native AppKit and SwiftUI app with no dependencies, built with th
 
 ```sh
 swift test                                # run the tests
-sh scripts/build-app.sh                   # build/PicViewer.app, universal (Apple Silicon and Intel)
+sh scripts/build-app.sh                   # build/PicViewer.app
 sh scripts/build-app.sh --install         # build it and copy it to /Applications
 sh scripts/make-icon.sh                   # re-render the icon (Resources/AppIcon.icns, Resources/AppIcon.icon, docs/icon.png)
 ```

@@ -17,18 +17,9 @@ if [ -z "${SDKROOT:-}" ] && [ -d "$CLT_SDK" ] && [ "$(xcode-select -p)" = "/Libr
 fi
 
 cd "$ROOT"
-# One build per architecture, each in its own folder because both would otherwise write to the same output path.
-# lipo then joins them into a universal app that runs natively on Apple Silicon and Intel.
-ARCHITECTURES="arm64 x86_64"
-binaries=""
-for arch in $ARCHITECTURES; do
-    swift build -c release --product PicViewer --triple "$arch-apple-macosx14.0" --scratch-path ".build/$arch"
-    binaries="$binaries $(swift build -c release --triple "$arch-apple-macosx14.0" --scratch-path ".build/$arch" --show-bin-path)/PicViewer"
-done
-BIN="$ROOT/build/PicViewer-universal"
-mkdir -p "$ROOT/build"
-# $binaries is unquoted on purpose, so each path becomes its own argument.
-lipo -create $binaries -output "$BIN"
+# Apple Silicon only.
+swift build -c release --product PicViewer --arch arm64
+BIN="$(swift build -c release --arch arm64 --show-bin-path)/PicViewer"
 
 if [ ! -f "$ROOT/Resources/AppIcon.icns" ]; then
     sh "$ROOT/scripts/make-icon.sh"
@@ -42,7 +33,6 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 MINOS="$(vtool -show-build "$BIN" | awk '/minos/ {print $2; exit}')"
 SDK="$(xcrun --sdk macosx --show-sdk-version)"
 vtool -set-build-version macos "${MINOS:-14.0}" "$SDK" -replace -output "$APP/Contents/MacOS/PicViewer" "$BIN"
-rm -f "$BIN"
 cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
 # macOS 26 draws app icons in Liquid Glass from an Icon Composer document compiled into Assets.car. A plain .icns still
