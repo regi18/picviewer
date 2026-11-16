@@ -28,6 +28,8 @@ final class ViewerModel {
     @ObservationIgnored private var imageTask: Task<Void, Never>?
     @ObservationIgnored private var infoTask: Task<Void, Never>?
     @ObservationIgnored private var orderTask: Task<Void, Never>?
+    @ObservationIgnored private var refreshQueued = false
+    @ObservationIgnored private var queuedKeep: String?
     @ObservationIgnored private var prefetchTask: Task<Void, Never>?
     @ObservationIgnored private var editChain: Task<Void, Never>?
     @ObservationIgnored private var messageTask: Task<Void, Never>?
@@ -63,35 +65,69 @@ final class ViewerModel {
         orderLabel = nil
         showCurrent()
         watcher = FolderWatcher(folder: folder) { [weak self] in self?.refreshFolder() }
-        refreshFolder(keeping: name)
+        orderTask?.cancel()
+        orderTask = nil
+        refreshQueued = false
+        startListing(keeping: name, savedOrderFirst: true)
         NSDocumentController.shared.noteNewRecentDocumentURL(url)
     }
 
     /// Lists the folder again and sorts it the way Finder shows it right now. Runs when a folder opens, when its
-    /// files change, and whenever the app comes to the front, in case the Finder sort changed meanwhile.
+    /// files change, and whenever the app comes to the front, in case the Finder sort changed meanwhile. A request
+    /// while a listing is still running waits for it and then lists once more, so opening a picture and the app
+    /// coming to the front don't cancel each other.
     func refreshFolder(keeping name: String? = nil) {
+        guard folder != nil else { return }
+        if orderTask != nil {
+            refreshQueued = true
+            if let name { queuedKeep = name }
+            return
+        }
+        startListing(keeping: name, savedOrderFirst: false)
+    }
+
+    /// Listing the folder and reading its saved view settings takes milliseconds, but asking Finder about its window
+    /// can take a few seconds. With `savedOrderFirst`, used when a folder opens, the pictures can be browsed in the
+    /// saved order straight away, and move to Finder's live order once it answers, staying on the picture on screen.
+    private func startListing(keeping name: String?, savedOrderFirst: Bool) {
         guard let folder else { return }
-        let keep = name ?? current?.lastPathComponent
-        orderTask?.cancel()
         orderTask = Task {
-            let (urls, order) = await Task.detached(priority: .userInitiated) {
-                let order = FinderOrderResolver.resolve(folder: folder)
-                let entries = FolderScanner.sort(FolderScanner.entries(in: folder), by: order.order)
-                return (entries.map(\.url), order)
-            }.value
+            if savedOrderFirst {
+                let (urls, order) = await Self.listing(folder, askFinder: false)
+                guard !Task.isCancelled, folder == self.folder else { return }
+                apply(urls, order: order, keeping: name)
+            }
+            let (urls, order) = await Self.listing(folder, askFinder: true)
             guard !Task.isCancelled, folder == self.folder else { return }
             NSLog("PicViewer: %@ sorted by %@ (%@)", folder.path, order.order.label, order.source)
-            orderLabel = "\(order.order.label)  ·  \(order.source)"
-            apply(urls, keeping: keep)
+            // A picture asked for by name (one put back from the Trash), or else the one on screen now, which may
+            // have changed with the arrows while Finder was answering.
+            apply(urls, order: order, keeping: (savedOrderFirst ? nil : name) ?? current?.lastPathComponent)
+            orderTask = nil
+            if refreshQueued {
+                refreshQueued = false
+                let keep = queuedKeep
+                queuedKeep = nil
+                refreshFolder(keeping: keep)
+            }
         }
     }
 
-    private func apply(_ urls: [URL], keeping name: String?) {
+    private nonisolated static func listing(_ folder: URL, askFinder: Bool) async -> ([URL], FinderOrderResolver.Result) {
+        await Task.detached(priority: .userInitiated) {
+            let order = FinderOrderResolver.resolve(folder: folder, askFinder: askFinder)
+            let entries = FolderScanner.sort(FolderScanner.entries(in: folder), by: order.order)
+            return (entries.map(\.url), order)
+        }.value
+    }
+
+    private func apply(_ urls: [URL], order: FinderOrderResolver.Result, keeping name: String?) {
+        orderLabel = "\(order.order.label)  ·  \(order.source)"
         let previousIndex = index
-        // A picture opened from a folder whose listing does not show it (an odd extension, say) stays viewable.
+        // A picture on screen that the listing does not show (opened with an odd extension, say) stays viewable.
         var urls = urls
         if let name, let folder, !urls.contains(where: { $0.lastPathComponent == name }),
-           files.count == 1, files.first?.lastPathComponent == name, FileManager.default.fileExists(atPath: folder.appendingPathComponent(name).path) {
+           current?.lastPathComponent == name, FileManager.default.fileExists(atPath: folder.appendingPathComponent(name).path) {
             urls.insert(folder.appendingPathComponent(name), at: 0)
         }
         files = urls
