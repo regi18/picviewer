@@ -1,0 +1,49 @@
+name: Bug report
+description: Something in PicViewer does not work the way it should.
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what you saw instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Sort a folder by Date Modified in Finder
+        2. Open its first picture in PicViewer
+        3. Press → a few times
+  - type: textarea
+    id: order
+    attributes:
+      label: Wrong order?
+      description: If pictures go by in the wrong order, the Order line under Details in the info sidebar (⌘I), and how the folder is sorted and viewed in Finder (list, icons, columns or gallery).
+  - type: input
+    id: camera
+    attributes:
+      label: Camera or file type
+      description: For rotation or info problems, the camera that took the picture and the file type, like Fujifilm X-T30 II JPEG or RAF.
+  - type: input
+    id: version
+    attributes:
+      label: PicViewer version
+      description: PicViewer > About PicViewer, or the release you downloaded.
+      placeholder: v1.0.0
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: macOS 26.1
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots
+      description: Drag images in here if they help show the problem.

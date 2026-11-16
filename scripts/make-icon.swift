@@ -1,11 +1,12 @@
 import AppKit
+import SwiftUI
 
 // Draws the app icon at every size an .icns needs, plus docs/icon.png for the README.
 //
-// A dark, softly lit squircle with a picture on it: a sunset over two hills, and the edge of the next picture peeking
+// A dark, softly lit rounded square with a picture on it: a sunset over two hills, and the edge of the next picture peeking
 // out behind, for browsing a folder.
 //
-// Usage: swift make-icon.swift <iconset-dir> [<readme-png>]
+// Usage: swift make-icon.swift <iconset-dir> [<readme-png>] [<icon-composer-assets-dir>]
 let output = URL(fileURLWithPath: CommandLine.arguments[1])
 try? FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
 
@@ -20,35 +21,29 @@ func gradient(_ colors: [CGColor], _ locations: [CGFloat]? = nil) -> CGGradient 
     CGGradient(colorsSpace: space, colors: colors as CFArray, locations: locations)!
 }
 
-/// Apple's icon shape is a superellipse rather than a rounded rectangle: the curve eases into the straight edges.
-func squircle(_ rect: CGRect, exponent n: CGFloat = 5) -> CGPath {
-    let path = CGMutablePath()
-    let a = rect.width / 2, b = rect.height / 2
-    let steps = 720
-    for i in 0...steps {
-        let t = CGFloat(i) / CGFloat(steps) * 2 * .pi
-        let c = cos(t), s = sin(t)
-        let x = rect.midX + a * (c < 0 ? -1 : 1) * pow(abs(c), 2 / n)
-        let y = rect.midY + b * (s < 0 ? -1 : 1) * pow(abs(s), 2 / n)
-        i == 0 ? path.move(to: CGPoint(x: x, y: y)) : path.addLine(to: CGPoint(x: x, y: y))
-    }
-    path.closeSubpath()
-    return path
+/// Apple's icon shape: a rounded square with continuous corners. macOS 26 masks app icons to exactly this shape, so the
+/// artwork has to fill it to the edge, or the system's plate shows through around it.
+func iconShape(_ rect: CGRect) -> CGPath {
+    RoundedRectangle(cornerRadius: rect.width * 0.225, style: .continuous).path(in: rect).cgPath
+}
+
+/// The parts of the icon. The flat .icns has them all; the Icon Composer document gets each as its own layer, so macOS 26
+/// can render them in glass.
+struct Parts: OptionSet {
+    let rawValue: Int
+    static let background = Parts(rawValue: 1)
+    static let backCard = Parts(rawValue: 2)
+    static let photo = Parts(rawValue: 4)
+    static let all: Parts = [.background, .backCard, .photo]
 }
 
 /// Everything is laid out on Apple's 1024 grid and scaled to the size asked for.
-func draw(in ctx: CGContext) {
-    // Body: 824 × 824, centred, with the standard drop shadow.
+func draw(in ctx: CGContext, parts: Parts = .all) {
+    // Body: 824 × 824, centred. No drop shadow and nothing outside the shape: the system adds its own.
     let body = CGRect(x: 100, y: 100, width: 824, height: 824)
-    let bodyPath = squircle(body)
+    let bodyPath = iconShape(body)
 
-    ctx.saveGState()
-    ctx.setShadow(offset: CGSize(width: 0, height: -12), blur: 28, color: color(0x000000, 0.45))
-    ctx.addPath(bodyPath)
-    ctx.setFillColor(color(0x15161D))
-    ctx.fillPath()
-    ctx.restoreGState()
-
+    if parts.contains(.background) {
     ctx.saveGState()
     ctx.addPath(bodyPath)
     ctx.clip()
@@ -69,12 +64,14 @@ func draw(in ctx: CGContext) {
     ctx.drawLinearGradient(gradient([color(0xFFFFFF, 0.30), color(0xFFFFFF, 0.04), color(0xFFFFFF, 0.10)], [0, 0.6, 1]),
                            start: CGPoint(x: 512, y: 924), end: CGPoint(x: 512, y: 100), options: [])
     ctx.restoreGState()
+    }
 
     // The picture, about 3:2. It sits a little left of and below centre, so with the one behind it the pair is centred.
     let photo = CGRect(x: 512 - 280 - 18, y: 512 - 186 - 16, width: 560, height: 372)
     let corner: CGFloat = 34
 
     // The next picture, peeking out behind and to the right.
+    if parts.contains(.backCard) {
     ctx.saveGState()
     ctx.translateBy(x: photo.midX + 40, y: photo.midY + 34)
     ctx.rotate(by: -0.12)
@@ -83,14 +80,19 @@ func draw(in ctx: CGContext) {
     ctx.setFillColor(color(0xFFFFFF, 0.16))
     ctx.fillPath()
     ctx.restoreGState()
+    }
 
+    guard parts.contains(.photo) else { return }
     let photoPath = CGPath(roundedRect: photo, cornerWidth: corner, cornerHeight: corner, transform: nil)
-    ctx.saveGState()
-    ctx.setShadow(offset: CGSize(width: 0, height: -10), blur: 30, color: color(0x000000, 0.5))
-    ctx.addPath(photoPath)
-    ctx.setFillColor(color(0x000000))
-    ctx.fillPath()
-    ctx.restoreGState()
+    // A drop shadow in the flat icon only; in the layered one the system casts it.
+    if parts.contains(.background) {
+        ctx.saveGState()
+        ctx.setShadow(offset: CGSize(width: 0, height: -10), blur: 30, color: color(0x000000, 0.5))
+        ctx.addPath(photoPath)
+        ctx.setFillColor(color(0x000000))
+        ctx.fillPath()
+        ctx.restoreGState()
+    }
 
     ctx.saveGState()
     ctx.addPath(photoPath)
@@ -137,12 +139,17 @@ func draw(in ctx: CGContext) {
     ctx.strokePath()
 }
 
-func render(_ size: Int) -> Data {
+func render(_ size: Int, parts: Parts = .all, fullBleed: Bool = false) -> Data {
     let ctx = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0, space: space,
                         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
     ctx.interpolationQuality = .high
     ctx.scaleBy(x: CGFloat(size) / 1024, y: CGFloat(size) / 1024)
-    draw(in: ctx)
+    if fullBleed {
+        // Icon Composer layers fill the whole canvas; the system masks them to the icon shape.
+        ctx.scaleBy(x: 1024 / 824, y: 1024 / 824)
+        ctx.translateBy(x: -100, y: -100)
+    }
+    draw(in: ctx, parts: parts)
     let rep = NSBitmapImageRep(cgImage: ctx.makeImage()!)
     return rep.representation(using: .png, properties: [:])!
 }
@@ -153,4 +160,11 @@ for (name, size) in [("16x16", 16), ("16x16@2x", 32), ("32x32", 32), ("32x32@2x"
 }
 if CommandLine.arguments.count > 2 {
     try! render(512).write(to: URL(fileURLWithPath: CommandLine.arguments[2]))
+}
+// The layers of the Icon Composer document, if asked for.
+if CommandLine.arguments.count > 3 {
+    let assets = URL(fileURLWithPath: CommandLine.arguments[3])
+    try? FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
+    try! render(1024, parts: .backCard, fullBleed: true).write(to: assets.appendingPathComponent("back.png"))
+    try! render(1024, parts: .photo, fullBleed: true).write(to: assets.appendingPathComponent("photo.png"))
 }

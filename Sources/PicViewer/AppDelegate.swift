@@ -111,6 +111,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSU
     @objc func toggleInfo(_ sender: Any?) { model.showsInfo.toggle() }
     @objc func showInFinder(_ sender: Any?) { model.revealInFinder() }
 
+    private lazy var settings = SettingsWindowController()
+    @objc func showSettings(_ sender: Any?) { settings.showWindow(sender) }
+
     func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
         switch item.action {
         case #selector(previousPicture(_:)): return model.hasPrevious
@@ -132,6 +135,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSU
 
         let app = submenu(in: main, title: "PicViewer")
         app.addItem(withTitle: "About PicViewer", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        app.addItem(.separator())
+        app.addItem(withTitle: "Settings…", action: #selector(showSettings(_:)), keyEquivalent: ",")
         app.addItem(.separator())
         app.addItem(withTitle: "Hide PicViewer", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         app.addItem(item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option]))

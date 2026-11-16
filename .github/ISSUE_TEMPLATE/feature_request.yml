@@ -1,0 +1,16 @@
+name: Feature idea
+description: Something PicViewer could do to make looking through pictures easier.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: What you were doing, and where PicViewer gets in the way today. Keep in mind PicViewer means to stay small.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help?
+      description: How you picture it working. Sketches and screenshots of other apps are welcome.

@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+
+# Pull requests from forks get a read-only token anyway; this keeps it that way for every run.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+      # jpegtran is the reference the lossless JPEG rotation is checked against; without it those tests skip.
+      - name: Install jpegtran
+        run: brew install jpeg-turbo
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+      - name: Test
+        run: swift test
+      - name: Build app bundle
+        run: ./scripts/build-app.sh
+      - name: Check the app runs on Apple Silicon and Intel
+        run: |
+          lipo build/PicViewer.app/Contents/MacOS/PicViewer -verify_arch arm64
+          lipo build/PicViewer.app/Contents/MacOS/PicViewer -verify_arch x86_64
+
+  # The build job runs on Apple Silicon, so the Intel half of the universal app is only tested here.
+  test-intel:
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v5
+      - name: Test
+        run: swift test
+
+  # main only takes merges from dev, so everything released has been through a dev build first.
+  main-only-from-dev:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the pull request comes from dev
+        if: github.event_name == 'pull_request' && github.base_ref == 'main' && github.head_ref != 'dev'
+        # Through an environment variable, so a branch name full of shell syntax is printed, never run.
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          echo "Pull requests into main must come from dev, this one comes from $HEAD_REF."
+          exit 1

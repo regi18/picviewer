@@ -188,16 +188,20 @@ final class ViewerModel {
 
     // MARK: Editing
 
-    /// Turns the picture a quarter turn on disk (only its orientation tag changes, never its pixels), then turns
-    /// the picture on screen to match without decoding it again. Turns queue up, so pressing ⌘R three times quickly
-    /// does three turns in order.
+    /// Turns the picture a quarter turn on disk, the way Settings says (the orientation tag, or the JPEG's pixels,
+    /// losslessly), then turns the picture on screen to match without decoding it again. Turns queue up, so pressing
+    /// ⌘R three times quickly does three turns in order.
     func rotate(clockwise: Bool) {
         guard let url = current else { return }
         let previous = editChain
+        let mode = RotationMode.current
         editChain = Task {
             await previous?.value
             do {
-                _ = try await Task.detached(priority: .userInitiated) { try LosslessRotation.rotate(url, clockwise: clockwise) }.value
+                let outcome = try await Task.detached(priority: .userInitiated) {
+                    try LosslessRotation.rotate(url, clockwise: clockwise, mode: mode)
+                }.value
+                if let note = outcome.note { show(message: note) }
             } catch {
                 show(message: error.localizedDescription)
                 return

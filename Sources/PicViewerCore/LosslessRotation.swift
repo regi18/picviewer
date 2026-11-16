@@ -17,6 +17,26 @@ public enum RotationError: LocalizedError {
     }
 }
 
+/// How ⌘R turns a picture.
+public enum RotationMode: String, CaseIterable, Sendable {
+    /// Change the EXIF orientation tag. Instant, any format, but apps that ignore the tag show the picture unturned.
+    case orientationTag
+    /// Turn a JPEG's pixels losslessly, so it looks right everywhere. Other formats still get the tag.
+    case pixels
+
+    public static let defaultsKey = "rotationMode"
+
+    public static var current: RotationMode {
+        UserDefaults.standard.string(forKey: defaultsKey).flatMap(RotationMode.init(rawValue:)) ?? .orientationTag
+    }
+}
+
+public struct RotationOutcome: Sendable, Equatable {
+    public let orientation: Int
+    /// Something worth telling the user, such as a fallback to the orientation tag.
+    public let note: String?
+}
+
 /// Rotates pictures without touching a single pixel: only the EXIF orientation tag changes, which every modern viewer
 /// and editor honours.
 ///
@@ -58,6 +78,138 @@ public enum LosslessRotation {
         if try patchInPlace(url, to: target) { return target }
         try rewriteWithImageIO(url, to: target)
         return target
+    }
+
+    /// Turns the picture a quarter turn the chosen way. In `.pixels` mode a JPEG has its compressed blocks turned
+    /// (losslessly, see `JPEGLosslessTransform`) and ends up with orientation 1; every other file, and a JPEG that
+    /// cannot be turned that way without losing anything, gets the orientation tag instead, with a note saying so.
+    public static func rotate(_ url: URL, clockwise: Bool, mode: RotationMode) throws -> RotationOutcome {
+        guard mode == .pixels, isJPEG(url) else {
+            return RotationOutcome(orientation: try rotate(url, clockwise: clockwise), note: nil)
+        }
+        guard let current = orientation(of: url) else { throw RotationError.unreadable }
+        let target = rotated(current, clockwise: clockwise)
+        // Back to upright: the pixels already face the right way, only the tag needs to say so.
+        if target == 1 { return RotationOutcome(orientation: try rotate(url, clockwise: clockwise), note: nil) }
+
+        do {
+            try bakeJPEG(url, orientation: target)
+            return RotationOutcome(orientation: 1, note: nil)
+        } catch let failure as JPEGLosslessTransform.Failure {
+            let reason = failure == .notAligned
+                ? "its size is not a multiple of the JPEG block size"
+                : "this kind of JPEG cannot be turned losslessly"
+            return RotationOutcome(orientation: try rotate(url, clockwise: clockwise),
+                                   note: "Rotated with the orientation tag: \(reason).")
+        }
+    }
+
+    private static func isJPEG(_ url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        return (try? handle.read(upToCount: 3)).map(Array.init) == [0xFF, 0xD8, 0xFF]
+    }
+
+    // MARK: Lossless pixel rotation
+
+    /// Writes the JPEG with `orientation` baked into its blocks, after checking the result decodes to the same picture.
+    /// Throws `JPEGLosslessTransform.Failure` (nothing written) when it cannot be done losslessly.
+    static func bakeJPEG(_ url: URL, orientation target: Int) throws {
+        let original = try Data(contentsOf: url)
+        let output = Data(try JPEGLosslessTransform.bake([UInt8](original), orientation: target))
+
+        guard let before = CGImageSourceCreateWithData(original as CFData, nil),
+              let after = CGImageSourceCreateWithData(output as CFData, nil),
+              let oldProperties = CGImageSourceCopyPropertiesAtIndex(before, 0, nil) as? [CFString: Any],
+              let newProperties = CGImageSourceCopyPropertiesAtIndex(after, 0, nil) as? [CFString: Any],
+              let oldWidth = oldProperties[kCGImagePropertyPixelWidth] as? Int,
+              let oldHeight = oldProperties[kCGImagePropertyPixelHeight] as? Int
+        else { throw JPEGLosslessTransform.Failure.unsupported("verification") }
+        let turned = target >= 5
+        guard newProperties[kCGImagePropertyPixelWidth] as? Int == (turned ? oldHeight : oldWidth),
+              newProperties[kCGImagePropertyPixelHeight] as? Int == (turned ? oldWidth : oldHeight),
+              (newProperties[kCGImagePropertyOrientation] as? Int ?? 1) == 1,
+              let difference = bakedDifference(original: before, baked: after, orientation: target), difference < 2
+        else { throw JPEGLosslessTransform.Failure.unsupported("verification") }
+
+        let dates = try? url.resourceValues(forKeys: [.contentModificationDateKey])
+        defer {
+            if let modified = dates?.contentModificationDate {
+                try? FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
+            }
+        }
+        try overwrite(url, with: output, original: original)
+    }
+
+    /// The mean difference (0 to 255) between the baked file's pixels and the original's pixels turned by
+    /// `orientation` in software, compared at a reduced size, ignoring both files' tags. Blocks moved the wrong way
+    /// show up as a difference of tens; a correct result differs by a fraction of one, from rounding.
+    static func bakedDifference(original a: CGImageSource, baked b: CGImageSource, orientation: Int) -> Double? {
+        guard let flip = JPEGLosslessTransform.Flip(orientation: orientation) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: false,
+            kCGImageSourceThumbnailMaxPixelSize: 512,
+            kCGImageSourceShouldCacheImmediately: true,
+        ]
+        guard let first = CGImageSourceCreateThumbnailAtIndex(a, 0, options as CFDictionary),
+              let second = CGImageSourceCreateThumbnailAtIndex(b, 0, options as CFDictionary)
+        else { return nil }
+        let width = second.width, height = second.height
+        // The original's size before it turns.
+        let sourceWidth = flip.transpose ? height : width, sourceHeight = flip.transpose ? width : height
+        guard abs(first.width - sourceWidth) <= 2, abs(first.height - sourceHeight) <= 2 else { return nil }
+
+        func pixels(_ image: CGImage, _ width: Int, _ height: Int) -> [UInt8]? {
+            var buffer = [UInt8](repeating: 0, count: width * height * 4)
+            let drawn = buffer.withUnsafeMutableBytes { raw -> Bool in
+                guard let context = CGContext(data: raw.baseAddress, width: width, height: height, bitsPerComponent: 8,
+                                              bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                              bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)
+                else { return false }
+                context.interpolationQuality = .medium
+                context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+                return true
+            }
+            return drawn ? buffer : nil
+        }
+        guard let p = pixels(first, sourceWidth, sourceHeight), let q = pixels(second, width, height) else { return nil }
+        var total = 0
+        for dy in 0..<height {
+            for dx in 0..<width {
+                let y1 = flip.vflip ? height - 1 - dy : dy, x1 = flip.hflip ? width - 1 - dx : dx
+                let (sx, sy) = flip.transpose ? (y1, x1) : (x1, y1)
+                let i = (sy * sourceWidth + sx) * 4, j = (dy * width + dx) * 4
+                total += abs(Int(p[i]) - Int(q[j])) + abs(Int(p[i + 1]) - Int(q[j + 1])) + abs(Int(p[i + 2]) - Int(q[j + 2]))
+            }
+        }
+        return Double(total) / Double(width * height * 3)
+    }
+
+    /// Writes over the file in place, so it keeps its identity, Finder tags and date added (and with them its place in
+    /// the folder). A copy of the original sits in a temporary folder until the new bytes are on disk and read back.
+    private static func overwrite(_ url: URL, with output: Data, original: Data) throws {
+        let backupFolder = try? FileManager.default.url(for: .itemReplacementDirectory, in: .userDomainMask,
+                                                        appropriateFor: url, create: true)
+        let backup = backupFolder?.appendingPathComponent(url.lastPathComponent)
+        if let backup { try original.write(to: backup) }
+
+        func write(_ data: Data) throws {
+            let handle = try FileHandle(forWritingTo: url)
+            defer { try? handle.close() }
+            try handle.truncate(atOffset: 0)
+            try handle.write(contentsOf: data)
+            try handle.synchronize()
+        }
+
+        do {
+            try write(output)
+            guard try Data(contentsOf: url) == output else { throw RotationError.verificationFailed }
+        } catch {
+            try? write(original)
+            throw error
+        }
+        if let backupFolder { try? FileManager.default.removeItem(at: backupFolder) }
     }
 
     // MARK: In-place tag patch

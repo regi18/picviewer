@@ -39,6 +39,39 @@ final class SampleFileTests: XCTestCase {
         }
     }
 
+    /// Four lossless pixel turns of every JPEG sample: each must really turn the blocks (orientation 1 afterwards), and
+    /// the fourth must land on exactly the original coefficients, with the original's orientation baked in.
+    func testSampleJPEGsTurnTheirPixelsLosslessly() throws {
+        guard let path = ProcessInfo.processInfo.environment["PICVIEWER_SAMPLES"] else { throw XCTSkip("PICVIEWER_SAMPLES not set") }
+        let samples = try FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: path), includingPropertiesForKeys: nil)
+            .filter { ["jpg", "jpeg"].contains($0.pathExtension.lowercased()) }
+        let work = FileManager.default.temporaryDirectory.appendingPathComponent("PicViewerSamples-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: work) }
+
+        for sample in samples {
+            let url = work.appendingPathComponent(sample.lastPathComponent)
+            try FileManager.default.copyItem(at: sample, to: url)
+            let original = try JPEGLosslessTransform.Picture([UInt8](Data(contentsOf: url)))
+            let start = LosslessRotation.orientation(of: url) ?? 1
+            var times: [Double] = []
+            var notes: [String] = []
+            for _ in 0..<4 {
+                let clock = Date()
+                let outcome = try LosslessRotation.rotate(url, clockwise: true, mode: .pixels)
+                times.append(Date().timeIntervalSince(clock))
+                if let note = outcome.note { notes.append(note) }
+            }
+            if notes.isEmpty {
+                let expected = try JPEGLosslessTransform.Flip(orientation: start).map { try original.transformed($0, trim: false) } ?? original
+                XCTAssertTrue(try JPEGLosslessTransform.Picture([UInt8](Data(contentsOf: url))).sameImage(as: expected), sample.lastPathComponent)
+                XCTAssertEqual(LosslessRotation.orientation(of: url), 1)
+            }
+            let size = try Data(contentsOf: url).count
+            print("PIXELS \(sample.lastPathComponent): \(original.width)×\(original.height), orientation \(start), turns \(times.map { String(format: "%.2fs", $0) }), \(notes.first ?? "lossless"), \(try Data(contentsOf: sample).count) -> \(size) bytes")
+        }
+    }
+
     private func displayedSize(_ url: URL) throws -> CGSize {
         let data = try Data(contentsOf: url)
         let source = try XCTUnwrap(CGImageSourceCreateWithData(data as CFData, nil))
