@@ -12,6 +12,11 @@ Open a picture, then flip through its folder with the arrow keys. Rotate without
 ![Swift](https://img.shields.io/badge/Swift-native-F05138?logo=swift&logoColor=white)
 ![Liquid Glass](https://img.shields.io/badge/Liquid%20Glass-macOS%2026-8E8EF0)
 
+<br>
+<br>
+
+<img src="docs/screenshot.png" width="720" alt="PicViewer showing a mountain photo, with the rotate, trash and info buttons in the title bar">
+
 </div>
 
 ## Why this exists
