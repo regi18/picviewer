@@ -3,7 +3,7 @@ import Foundation
 
 /// Works out how Finder orders a folder, so the viewer steps through the pictures in that same order.
 ///
-/// 1. Ask Finder (AppleScript) about a window showing the folder right now. This is the live truth, including the
+/// 1. Ask Finder (Apple Events) about a window showing the folder right now. This is the live truth, including the
 ///    icon positions of an unsorted icon view.
 /// 2. Read the folder's .DS_Store, where Finder saves each folder's view settings.
 /// 3. Read Finder's default view settings.
@@ -98,130 +98,177 @@ public enum FinderOrderResolver {
     }
 }
 
-/// Asks Finder through AppleScript how a window showing the folder is sorted. The first time, macOS asks the user to
-/// let PicViewer control Finder; without that permission this returns `.unavailable`.
+/// Asks Finder how a window showing the folder is sorted, with Apple Events sent straight from PicViewer. These are the
+/// questions an AppleScript would ask, without starting osascript and compiling a script every time: three to five
+/// round trips of a few milliseconds each, unless Finder is busy. The first time, macOS asks the user to let
+/// PicViewer control Finder; without that permission, or with Finder not running, this returns `.unavailable`.
 enum FinderLiveQuery {
     enum Answer {
         case order(FolderOrder)
-        /// A window shows the folder, but in a view AppleScript cannot read the sort of.
+        /// A window shows the folder, but in a view whose sort can't be read (column or gallery view, or a sort the
+        /// scripting dictionary has no word for, like Date Added).
         case style(FinderOrderResolver.ViewStyle)
         case unavailable
     }
 
-    // Enumerations are compared inside the script and mapped to plain words, so nothing depends on how AppleScript
-    // turns a Finder constant into text. Sorts the dictionary has no word for (Date Added, say) come back as
-    // "unknown" and fall through to the .DS_Store.
-    private static let script = """
-    on run argv
-        set folderPath to item 1 of argv
-        tell application "Finder"
-            repeat with w in (every Finder window)
-                try
-                    set t to target of w
-                    if POSIX path of (t as alias) is folderPath then
-                        set v to current view of w
-                        if v is list view then
-                            set c to sort column of list view options of w
-                            set n to name of c
-                            set d to "normal"
-                            if sort direction of c is reversed then set d to "reversed"
-                            set k to "unknown"
-                            if n is name column then set k to "name"
-                            if n is modification date column then set k to "dateModified"
-                            if n is creation date column then set k to "dateCreated"
-                            if n is size column then set k to "size"
-                            if n is kind column then set k to "kind"
-                            if n is label column then set k to "label"
-                            if n is version column then set k to "version"
-                            if n is comment column then set k to "comments"
-                            return "list" & tab & k & tab & d
-                        else if v is icon view then
-                            set a to arrangement of icon view options of w
-                            if a is not arranged or a is snap to grid then
-                                set ns to name of every item of t
-                                set ps to position of every item of t
-                                set out to {"icon" & tab & "positions"}
-                                repeat with i from 1 to count of ns
-                                    set p to item i of ps
-                                    set end of out to ((item 1 of p) as text) & tab & ((item 2 of p) as text) & tab & (item i of ns)
-                                end repeat
-                                set AppleScript's text item delimiters to linefeed
-                                return out as text
-                            end if
-                            set k to "unknown"
-                            if a is arranged by name then set k to "name"
-                            if a is arranged by modification date then set k to "dateModified"
-                            if a is arranged by creation date then set k to "dateCreated"
-                            if a is arranged by size then set k to "size"
-                            if a is arranged by kind then set k to "kind"
-                            if a is arranged by label then set k to "label"
-                            return "icon" & tab & k
-                        else if v is column view then
-                            return "column"
-                        else
-                            return "gallery"
-                        end if
-                    end if
-                end try
-            end repeat
-        end tell
-        return "none"
-    end run
-    """
-
     static func query(folder: URL) -> Answer {
-        guard let output = run(folderPath: folder.standardizedFileURL.path + "/") else { return .unavailable }
-        return parse(output)
-    }
-
-    static func parse(_ output: String) -> Answer {
-        let lines = output.components(separatedBy: "\n")
-        let head = lines.first?.components(separatedBy: "\t") ?? []
-        switch head.first {
-        case "list":
-            guard head.count == 3, let key = SortKey(rawValue: head[1]) else { return .style(.list) }
-            let ascending = head[2] == "reversed" ? !key.naturalAscending : key.naturalAscending
-            return .order(.sorted(key, ascending: ascending))
-        case "icon":
-            if head.count == 2, head[1] == "positions" {
-                var positions: [String: CGPoint] = [:]
-                for line in lines.dropFirst() {
-                    let parts = line.split(separator: "\t", maxSplits: 2, omittingEmptySubsequences: false)
-                    guard parts.count == 3, let x = Double(parts[0]), let y = Double(parts[1]) else { continue }
-                    positions[String(parts[2])] = CGPoint(x: x, y: y)
-                }
-                return .order(.iconPositions(positions))
+        let finder = FinderScripting()
+        guard let window = finder.window(showing: folder) else { return .unavailable }
+        switch finder.get("pvew", of: window)?.enumCodeValue.fourCharacterString {
+        case "lsvw":
+            let column = FinderScripting.property("srtc", of: FinderScripting.property("lvop", of: window))
+            guard let name = finder.get("pnam", of: column)?.enumCodeValue.fourCharacterString else { return .style(.list) }
+            let direction = finder.get("sord", of: column)?.enumCodeValue.fourCharacterString ?? "snrm"
+            return listAnswer(column: name, direction: direction)
+        case "icnv":
+            let options = FinderScripting.property("icop", of: window)
+            guard let arrangement = finder.get("iarr", of: options)?.enumCodeValue.fourCharacterString else { return .style(.icon) }
+            if arrangement == "narr" || arrangement == "grda" {
+                // Icons left where they were put: read every position. The one slow case, as Finder has to lay out
+                // the whole folder to answer.
+                let items = FinderScripting.every("cobj", of: FinderScripting.property("fvtg", of: window))
+                guard let names = finder.get("pnam", of: items)?.listValues.compactMap(\.stringValue),
+                      let points = finder.get("posn", of: items)?.listValues.map(FinderScripting.point)
+                else { return .style(.icon) }
+                return positionsAnswer(names: names, points: points)
             }
-            guard head.count == 2, let key = SortKey(rawValue: head[1]) else { return .style(.icon) }
-            return .order(.sorted(key, ascending: key.naturalAscending))
-        case "column": return .style(.column)
-        case "gallery": return .style(.gallery)
-        default: return .unavailable
+            return iconAnswer(arrangement: arrangement)
+        case "clvw":
+            return .style(.column)
+        case .some:
+            return .style(.gallery)
+        case nil:
+            return .unavailable
         }
     }
 
-    /// Runs the script with osascript, giving up after a few seconds so a busy Finder cannot hold up the viewer.
-    private static func run(folderPath: String) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-e", script, folderPath]
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = Pipe()
-        let done = DispatchSemaphore(value: 0)
-        process.terminationHandler = { _ in done.signal() }
-        do { try process.run() } catch { return nil }
-        // Reading before waiting, so a long answer cannot fill the pipe and stall osascript.
-        var data = Data()
-        let reader = DispatchQueue(label: "picviewer.osascript.read")
-        reader.async { data = output.fileHandleForReading.readDataToEndOfFile() }
-        if done.wait(timeout: .now() + 4) == .timedOut {
-            process.terminate()
-            return nil
+    /// A list view sorted by a column, from the codes Finder's dictionary uses for the column and direction.
+    static func listAnswer(column: String, direction: String) -> Answer {
+        let keys = ["elsn": SortKey.name, "elsm": .dateModified, "elsc": .dateCreated, "elss": .size, "elsk": .kind,
+                    "elsl": .label, "elsv": .version, "elsC": .comments]
+        guard let key = keys[column] else { return .style(.list) }
+        let ascending = direction == "srvs" ? !key.naturalAscending : key.naturalAscending
+        return .order(.sorted(key, ascending: ascending))
+    }
+
+    /// An icon view's Sort By, which always runs in its natural direction.
+    static func iconAnswer(arrangement: String) -> Answer {
+        let keys = ["nama": SortKey.name, "mdta": .dateModified, "cdta": .dateCreated, "siza": .size, "kina": .kind,
+                    "laba": .label]
+        guard let key = keys[arrangement] else { return .style(.icon) }
+        return .order(.sorted(key, ascending: key.naturalAscending))
+    }
+
+    static func positionsAnswer(names: [String], points: [CGPoint?]) -> Answer {
+        var positions: [String: CGPoint] = [:]
+        for (name, point) in zip(names, points) {
+            if let point { positions[name] = point }
         }
-        reader.sync {}
-        guard process.terminationStatus == 0 else { return nil }
-        let text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .newlines)
-        return text.isEmpty ? nil : text
+        return .order(.iconPositions(positions))
+    }
+}
+
+/// Just enough of the Apple Event object model to ask Finder for properties: object specifiers for properties,
+/// indexed elements and every element, and a "get" event sent with a timeout.
+struct FinderScripting {
+    private let target = NSAppleEventDescriptor(bundleIdentifier: "com.apple.finder")
+    /// Seconds to wait for each answer, so a busy Finder can't hold up the viewer for long.
+    var timeout: TimeInterval = 2
+
+    /// The frontmost Finder window or tab showing `folder`, if any.
+    func window(showing folder: URL) -> NSAppleEventDescriptor? {
+        let wanted = Self.normalized(folder)
+        let windows = Self.every("brow", of: .null())
+        // One question for all windows at once. It fails when a window shows something without a URL, like
+        // Recents or a search, and then the windows are asked one by one.
+        if let urls = get("pURL", of: Self.property("fvtg", of: windows))?.listValues {
+            guard let index = urls.firstIndex(where: { Self.normalized($0.stringValue) == wanted }) else { return nil }
+            return Self.element("brow", index: index + 1, of: .null())
+        }
+        let count = Int(send(Self.event("core", "cnte", [
+            keyDirectObject: .null(), Self.code("kocl"): NSAppleEventDescriptor(typeCode: Self.code("brow")),
+        ]))?.int32Value ?? 0)
+        for index in 1 ... max(1, min(count, 50)) where count > 0 {
+            let window = Self.element("brow", index: index, of: .null())
+            if Self.normalized(get("pURL", of: Self.property("fvtg", of: window))?.stringValue) == wanted { return window }
+        }
+        return nil
+    }
+
+    func get(_ property: String, of container: NSAppleEventDescriptor) -> NSAppleEventDescriptor? {
+        send(Self.event("core", "getd", [keyDirectObject: Self.property(property, of: container)]))
+    }
+
+    private func send(_ event: NSAppleEventDescriptor) -> NSAppleEventDescriptor? {
+        // Sent to Finder only if it's already running; Finder isn't launched just to be asked.
+        guard let reply = try? event.sendEvent(options: [.waitForReply], timeout: timeout) else { return nil }
+        if let error = reply.paramDescriptor(forKeyword: keyErrorNumber), error.int32Value != 0 { return nil }
+        return reply.paramDescriptor(forKeyword: keyDirectObject)
+    }
+
+    private static func event(_ eventClass: String, _ id: String, _ parameters: [AEKeyword: NSAppleEventDescriptor]) -> NSAppleEventDescriptor {
+        let event = NSAppleEventDescriptor(eventClass: code(eventClass), eventID: code(id), targetDescriptor: FinderScripting().target,
+                                           returnID: AEReturnID(kAutoGenerateReturnID), transactionID: AETransactionID(kAnyTransactionID))
+        for (keyword, value) in parameters { event.setParam(value, forKeyword: keyword) }
+        return event
+    }
+
+    static func property(_ property: String, of container: NSAppleEventDescriptor) -> NSAppleEventDescriptor {
+        specifier(wanting: "prop", of: container, form: "prop", data: NSAppleEventDescriptor(typeCode: code(property)))
+    }
+
+    static func element(_ elementClass: String, index: Int, of container: NSAppleEventDescriptor) -> NSAppleEventDescriptor {
+        specifier(wanting: elementClass, of: container, form: "indx", data: NSAppleEventDescriptor(int32: Int32(index)))
+    }
+
+    static func every(_ elementClass: String, of container: NSAppleEventDescriptor) -> NSAppleEventDescriptor {
+        var all = code("all ")
+        let data = NSAppleEventDescriptor(descriptorType: code("abso"), bytes: &all, length: MemoryLayout<FourCharCode>.size)!
+        return specifier(wanting: elementClass, of: container, form: "indx", data: data)
+    }
+
+    private static func specifier(wanting wanted: String, of container: NSAppleEventDescriptor, form: String,
+                                  data: NSAppleEventDescriptor) -> NSAppleEventDescriptor {
+        let specifier = NSAppleEventDescriptor.record().coerce(toDescriptorType: code("obj "))!
+        specifier.setDescriptor(NSAppleEventDescriptor(typeCode: code(wanted)), forKeyword: code("want"))
+        specifier.setDescriptor(container, forKeyword: code("from"))
+        specifier.setDescriptor(NSAppleEventDescriptor(enumCode: code(form)), forKeyword: code("form"))
+        specifier.setDescriptor(data, forKeyword: code("seld"))
+        return specifier
+    }
+
+    /// An item position: a list of two numbers, or an old QuickDraw point (vertical first).
+    static func point(_ descriptor: NSAppleEventDescriptor) -> CGPoint? {
+        let values = descriptor.listValues
+        if values.count == 2 {
+            return CGPoint(x: Double(values[0].int32Value), y: Double(values[1].int32Value))
+        }
+        guard let point = descriptor.coerce(toDescriptorType: code("QDpt")), point.data.count == 4 else { return nil }
+        let shorts = point.data.withUnsafeBytes { Array($0.bindMemory(to: Int16.self)) }
+        return CGPoint(x: Double(shorts[1]), y: Double(shorts[0]))
+    }
+
+    /// Paths compared without symbolic links or a trailing slash, so /tmp/x/ matches /private/tmp/x.
+    static func normalized(_ url: URL) -> String { url.resolvingSymlinksInPath().standardizedFileURL.path }
+
+    static func normalized(_ urlString: String?) -> String? {
+        guard let urlString, let url = URL(string: urlString), url.isFileURL else { return nil }
+        return normalized(url)
+    }
+
+    static func code(_ text: String) -> FourCharCode { text.utf8.reduce(0) { $0 << 8 | FourCharCode($1) } }
+}
+
+extension NSAppleEventDescriptor {
+    /// The items of a list, or the descriptor itself when it isn't one.
+    var listValues: [NSAppleEventDescriptor] {
+        guard descriptorType == typeAEList else { return [self] }
+        return numberOfItems == 0 ? [] : (1 ... numberOfItems).compactMap { atIndex($0) }
+    }
+}
+
+extension FourCharCode {
+    var fourCharacterString: String {
+        String(bytes: [24, 16, 8, 0].map { UInt8((self >> $0) & 0xFF) }, encoding: .macOSRoman) ?? ""
     }
 }

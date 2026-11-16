@@ -33,23 +33,43 @@ final class OrderTests: XCTestCase {
         XCTAssertEqual(sorted, ["b.jpg", "a.jpg", "d.jpg", "c.jpg", "e.jpg"])
     }
 
-    func testLiveAnswersParse() {
-        if case .order(let order) = FinderLiveQuery.parse("list\tdateModified\tnormal") {
+    func testLiveAnswers() {
+        if case .order(let order) = FinderLiveQuery.listAnswer(column: "elsm", direction: "snrm") {
             XCTAssertEqual(order, .sorted(.dateModified, ascending: false))
         } else { XCTFail() }
-        if case .order(let order) = FinderLiveQuery.parse("list\tname\treversed") {
+        if case .order(let order) = FinderLiveQuery.listAnswer(column: "elsn", direction: "srvs") {
             XCTAssertEqual(order, .sorted(.name, ascending: false))
         } else { XCTFail() }
-        if case .order(let order) = FinderLiveQuery.parse("icon\tsize") {
+        if case .order(let order) = FinderLiveQuery.iconAnswer(arrangement: "siza") {
             XCTAssertEqual(order, .sorted(.size, ascending: false))
         } else { XCTFail() }
-        if case .order(.iconPositions(let positions)) = FinderLiveQuery.parse("icon\tpositions\n10\t20\tmy\tfile.jpg\n30\t20\tb.jpg") {
-            XCTAssertEqual(positions["my\tfile.jpg"], CGPoint(x: 10, y: 20))
+        if case .order(.iconPositions(let positions)) = FinderLiveQuery.positionsAnswer(
+            names: ["my file.jpg", "b.jpg", "c.jpg"], points: [CGPoint(x: 10, y: 20), CGPoint(x: 30, y: 20), nil]) {
+            XCTAssertEqual(positions["my file.jpg"], CGPoint(x: 10, y: 20))
             XCTAssertEqual(positions.count, 2)
         } else { XCTFail() }
-        if case .style(.list) = FinderLiveQuery.parse("list\tunknown\tnormal") {} else { XCTFail() }
-        if case .style(.column) = FinderLiveQuery.parse("column") {} else { XCTFail() }
-        if case .unavailable = FinderLiveQuery.parse("none") {} else { XCTFail() }
+        if case .style(.list) = FinderLiveQuery.listAnswer(column: "zzzz", direction: "snrm") {} else { XCTFail() }
+        if case .style(.icon) = FinderLiveQuery.iconAnswer(arrangement: "narr") {} else { XCTFail() }
+    }
+
+    func testAppleEventPieces() {
+        XCTAssertEqual(FinderScripting.code("brow"), 0x62726F77)
+        XCTAssertEqual(FinderScripting.code("elsC").fourCharacterString, "elsC")
+        let list = NSAppleEventDescriptor.list()
+        list.insert(NSAppleEventDescriptor(int32: 12), at: 0)
+        list.insert(NSAppleEventDescriptor(int32: -40), at: 0)
+        XCTAssertEqual(FinderScripting.point(list), CGPoint(x: 12, y: -40))
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("some folder \(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        // Finder answers with the real path (/private/var/…) and a trailing slash.
+        let real = URL(fileURLWithPath: realpath(folder.path, nil).map { String(cString: $0) } ?? folder.path, isDirectory: true)
+        XCTAssertEqual(FinderScripting.normalized(real.absoluteString), FinderScripting.normalized(folder))
+        let window = FinderScripting.element("brow", index: 2, of: .null())
+        let target = FinderScripting.property("fvtg", of: window)
+        XCTAssertEqual(target.descriptorType, FinderScripting.code("obj "))
+        XCTAssertEqual(target.forKeyword(FinderScripting.code("seld"))?.typeCodeValue, FinderScripting.code("fvtg"))
+        XCTAssertEqual(target.forKeyword(FinderScripting.code("from"))?.forKeyword(FinderScripting.code("seld"))?.int32Value, 2)
     }
 
     func testStoredListSettings() {

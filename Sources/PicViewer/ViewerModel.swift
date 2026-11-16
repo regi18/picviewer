@@ -97,9 +97,11 @@ final class ViewerModel {
                 guard !Task.isCancelled, folder == self.folder else { return }
                 apply(urls, order: order, keeping: name)
             }
+            let started = Date()
             let (urls, order) = await Self.listing(folder, askFinder: true)
             guard !Task.isCancelled, folder == self.folder else { return }
-            NSLog("PicViewer: %@ sorted by %@ (%@)", folder.path, order.order.label, order.source)
+            NSLog("PicViewer: %@ sorted by %@ (%@) in %.0f ms", folder.path, order.order.label, order.source,
+                  Date().timeIntervalSince(started) * 1000)
             // A picture asked for by name (one put back from the Trash), or else the one on screen now, which may
             // have changed with the arrows while Finder was answering.
             apply(urls, order: order, keeping: (savedOrderFirst ? nil : name) ?? current?.lastPathComponent)
