@@ -11,3 +11,4 @@ The first version.
 - Settings… (⌘,) can rotate JPEGs by turning the pixels instead of changing the orientation tag, for apps and websites that ignore the tag. It's just as lossless.
 - ⌘⌫ moves the picture to the Trash, and ⌘Z puts it back.
 - The info sidebar (⌘I) shows the file, the camera, lens and exposure settings.
+- Films in the folder (MOV, MP4) show up in order between the pictures and play straight away, with the system's playback controls. Space plays and pauses, and ⌘R / ⇧⌘R rotate them losslessly by changing only the track's display matrix. The sidebar shows their length, codec, frame rate, and the camera, date and place when the file has them.

@@ -42,9 +42,16 @@ struct InfoPanel: View {
         Section {
             InfoRow("File", value: info.fileName)
             InfoRow("Size") {
-                Text("\(Int(info.pixelSize.width).formatted()) × \(Int(info.pixelSize.height).formatted())  ·  \(info.megapixels.formatted(.number.precision(.fractionLength(1)))) MP")
+                if info.isVideo {
+                    Text("\(Int(info.pixelSize.width).formatted()) × \(Int(info.pixelSize.height).formatted())")
+                } else {
+                    Text("\(Int(info.pixelSize.width).formatted()) × \(Int(info.pixelSize.height).formatted())  ·  \(info.megapixels.formatted(.number.precision(.fractionLength(1)))) MP")
+                }
             }
             InfoRow("Aspect ratio", value: info.ratioLabel)
+            if let duration = info.durationLabel {
+                InfoRow("Duration", value: duration)
+            }
             if let fileSize = info.fileSize {
                 InfoRow("File size", value: Int64(fileSize).formatted(.byteCount(style: .file)))
             }
@@ -84,9 +91,12 @@ struct InfoPanel: View {
             if let artist = info.artist { InfoRow("Artist", value: artist) }
             if let copyright = info.copyright { InfoRow("Copyright", value: copyright) }
             if let format = info.format { InfoRow("Format", value: format) }
+            if let codec = info.codec { InfoRow("Codec", value: codec) }
+            if let rate = info.frameRateLabel { InfoRow("Frame rate", value: rate) }
             if let profile = info.colorProfile { InfoRow("Colour profile", value: profile) }
             if let depth = info.bitDepth { InfoRow("Bit depth", value: "\(depth) bit") }
-            InfoRow("Orientation", value: info.orientationLabel)
+            if !info.isVideo { InfoRow("Orientation", value: info.orientationLabel) }
+            if let rotation = info.videoRotationLabel { InfoRow("Orientation", value: rotation) }
             if let software = info.software { InfoRow("Software", value: software) }
             if let modified = info.modified {
                 InfoRow("Modified", value: modified.formatted(date: .abbreviated, time: .shortened))
@@ -159,7 +169,7 @@ private struct LocationSection: View {
         item.openInMaps(launchOptions: [MKLaunchOptionsMapCenterKey: NSValue(mkCoordinate: coordinate)])
     }
 
-    /// "Bled, Slovenia", looked up from the coordinates.
+    /// "Cupertino, California, United States", looked up from the coordinates.
     private static func placeName(for coordinate: CLLocationCoordinate2D) async -> String? {
         let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
         guard let placemark = try? await CLGeocoder().reverseGeocodeLocation(location).first else { return nil }

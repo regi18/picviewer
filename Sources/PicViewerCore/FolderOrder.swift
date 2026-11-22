@@ -94,18 +94,31 @@ public enum FolderScanner {
     ]
 
     public static func isImage(_ url: URL) -> Bool {
-        let type = (try? url.resourceValues(forKeys: [.contentTypeKey]))?.contentType
-            ?? UTType(filenameExtension: url.pathExtension)
-        return type?.conforms(to: .image) == true
+        contentType(of: url)?.conforms(to: .image) == true
     }
 
-    /// Every picture directly in `folder` (hidden files skipped, like Finder does), unsorted.
+    /// A film (MOV, MP4, …), which is played rather than decoded.
+    public static func isVideo(_ url: URL) -> Bool {
+        contentType(of: url)?.conforms(to: .movie) == true
+    }
+
+    /// Pictures and films: everything PicViewer steps through.
+    public static func isViewable(_ type: UTType?) -> Bool {
+        guard let type else { return false }
+        return type.conforms(to: .image) || type.conforms(to: .movie)
+    }
+
+    private static func contentType(of url: URL) -> UTType? {
+        (try? url.resourceValues(forKeys: [.contentTypeKey]))?.contentType ?? UTType(filenameExtension: url.pathExtension)
+    }
+
+    /// Every picture and film directly in `folder` (hidden files skipped, like Finder does), unsorted.
     public static func entries(in folder: URL) -> [FolderEntry] {
         let urls = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles])) ?? []
         return urls.compactMap { url in
             guard let values = try? url.resourceValues(forKeys: Set(keys)),
                   values.isRegularFile == true,
-                  (values.contentType ?? UTType(filenameExtension: url.pathExtension))?.conforms(to: .image) == true
+                  isViewable(values.contentType ?? UTType(filenameExtension: url.pathExtension))
             else { return nil }
             return FolderEntry(
                 url: url,

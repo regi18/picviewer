@@ -88,6 +88,13 @@ cat > "$APP/Contents/Info.plist" <<PLIST
             </array>
         </dict>
         <dict>
+            <key>CFBundleTypeName</key><string>Movie</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>LSHandlerRank</key><string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array><string>public.movie</string></array>
+        </dict>
+        <dict>
             <key>CFBundleTypeName</key><string>Folder</string>
             <key>CFBundleTypeRole</key><string>Viewer</string>
             <key>LSHandlerRank</key><string>None</string>

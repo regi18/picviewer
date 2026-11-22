@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Observation
 import PicViewerCore
 
@@ -9,6 +10,8 @@ final class ViewerModel {
     private(set) var files: [URL] = []
     private(set) var index = 0
     private(set) var image: CGImage?
+    /// Set while a film is on screen instead of a picture.
+    private(set) var player: AVPlayer?
     private(set) var info: ImageInfo?
     private(set) var loadFailed = false
     private(set) var orderLabel: String?
@@ -37,6 +40,8 @@ final class ViewerModel {
     @ObservationIgnored private var lastStep = 1
 
     var current: URL? { files.indices.contains(index) ? files[index] : nil }
+    var currentIsVideo: Bool { current.map(FolderScanner.isVideo) ?? false }
+    var isPlaying: Bool { player.map { $0.timeControlStatus != .paused } ?? false }
     var hasPrevious: Bool { index > 0 }
     var hasNext: Bool { index < files.count - 1 }
     var canUndoTrash: Bool { lastTrashed != nil }
@@ -161,10 +166,17 @@ final class ViewerModel {
         loadFailed = false
         shownURL = current
         guard let url = current else {
+            stopVideo()
             image = nil
             info = nil
             return
         }
+
+        if FolderScanner.isVideo(url) {
+            showVideo(url)
+            return
+        }
+        stopVideo()
 
         infoTask = Task {
             let info = await Task.detached(priority: .userInitiated) { try? ImageInfo(url: url) }.value
@@ -202,11 +214,11 @@ final class ViewerModel {
         [index, index + lastStep, index - lastStep].filter { files.indices.contains($0) }.map { files[$0] }
     }
 
-    /// Decodes the pictures either side, so the next arrow press is instant.
+    /// Decodes the pictures either side, so the next arrow press is instant. Films are opened when they come up.
     private func prefetch() {
         let wanted = neighbourhood
         cache = cache.filter { wanted.contains($0.key) }
-        let missing = wanted.filter { cache[$0] == nil && $0 != current }
+        let missing = wanted.filter { cache[$0] == nil && $0 != current && !FolderScanner.isVideo($0) }
         guard !missing.isEmpty else { return }
         let size = maxPixelSize
         prefetchTask = Task {
@@ -215,6 +227,55 @@ final class ViewerModel {
                 guard !Task.isCancelled else { return }
                 if let image, neighbourhood.contains(url) { cache[url] = image }
             }
+        }
+    }
+
+    // MARK: Films
+
+    /// Plays a film straight away, the way Quick Look does. Nothing is decoded ahead: AVPlayer starts in moments.
+    private func showVideo(_ url: URL, from time: CMTime? = nil, playing: Bool = true) {
+        image = nil
+        if (player?.currentItem?.asset as? AVURLAsset)?.url == url { return }
+        stopVideo()
+        infoTask?.cancel()
+        imageTask?.cancel()
+        let player = AVPlayer(url: url)
+        player.actionAtItemEnd = .pause
+        self.player = player
+        if let time { player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) }
+        if playing { player.play() }
+
+        infoTask = Task {
+            let info = try? await ImageInfo.video(at: url)
+            guard !Task.isCancelled else { return }
+            self.info = info
+        }
+        imageTask = Task {
+            let playable = (try? await player.currentItem?.asset.load(.isPlayable)) ?? false
+            guard !Task.isCancelled, url == current else { return }
+            if !playable {
+                stopVideo()
+                loadFailed = true
+            }
+        }
+        prefetch()
+    }
+
+    private func stopVideo() {
+        player?.pause()
+        player = nil
+    }
+
+    /// Space: pause, or play on, from the start again once the film has finished.
+    func togglePlayback() {
+        guard let player else { return }
+        if player.timeControlStatus == .paused {
+            if let item = player.currentItem, item.duration.isNumeric, item.currentTime() >= item.duration {
+                player.seek(to: .zero)
+            }
+            player.play()
+        } else {
+            player.pause()
         }
     }
 
@@ -231,6 +292,10 @@ final class ViewerModel {
     /// ⌘R three times quickly does three turns in order.
     func rotate(clockwise: Bool) {
         guard let url = current else { return }
+        if FolderScanner.isVideo(url) {
+            rotateVideo(url, clockwise: clockwise)
+            return
+        }
         let previous = editChain
         let mode = RotationMode.current
         editChain = Task {
@@ -265,8 +330,29 @@ final class ViewerModel {
         }
     }
 
+    /// Turns a film by its track matrix (see `VideoRotation`), whatever Settings says: films are never re-encoded.
+    /// The film on screen opens again turned, at the same moment, playing or paused as it was.
+    private func rotateVideo(_ url: URL, clockwise: Bool) {
+        let previous = editChain
+        editChain = Task {
+            await previous?.value
+            do {
+                try await VideoRotation.rotate(url, clockwise: clockwise)
+            } catch {
+                show(message: error.localizedDescription)
+                return
+            }
+            guard url == current else { return }
+            let time = player?.currentTime()
+            let playing = isPlaying
+            stopVideo()
+            showVideo(url, from: time, playing: playing)
+        }
+    }
+
     func moveToTrash() {
         guard let url = current else { return }
+        if url == (player?.currentItem?.asset as? AVURLAsset)?.url { stopVideo() }
         do {
             var trashed: NSURL?
             try FileManager.default.trashItem(at: url, resultingItemURL: &trashed)

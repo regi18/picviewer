@@ -94,7 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSU
 
     @objc func openDocument(_ sender: Any?) {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.image, .folder]
+        panel.allowedContentTypes = [.image, .movie, .folder]
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.directoryURL = model.folder
@@ -104,6 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSU
 
     @objc func previousPicture(_ sender: Any?) { model.step(-1) }
     @objc func nextPicture(_ sender: Any?) { model.step(1) }
+    @objc func togglePlayback(_ sender: Any?) { model.togglePlayback() }
     @objc func rotateClockwise(_ sender: Any?) { model.rotate(clockwise: true) }
     @objc func rotateCounterclockwise(_ sender: Any?) { model.rotate(clockwise: false) }
     @objc func moveToTrash(_ sender: Any?) { model.moveToTrash() }
@@ -118,6 +119,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSU
         switch item.action {
         case #selector(previousPicture(_:)): return model.hasPrevious
         case #selector(nextPicture(_:)): return model.hasNext
+        case #selector(togglePlayback(_:)):
+            (item as? NSMenuItem)?.title = model.isPlaying ? "Pause" : "Play"
+            return model.player != nil
         case #selector(rotateClockwise(_:)), #selector(rotateCounterclockwise(_:)), #selector(moveToTrash(_:)), #selector(showInFinder(_:)):
             return model.current != nil
         case #selector(undoMoveToTrash(_:)): return model.canUndoTrash
@@ -159,6 +163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, NSU
         let picture = submenu(in: main, title: "Picture")
         picture.addItem(item("Previous", #selector(previousPicture(_:)), arrow(NSLeftArrowFunctionKey), []))
         picture.addItem(item("Next", #selector(nextPicture(_:)), arrow(NSRightArrowFunctionKey), []))
+        picture.addItem(item("Play", #selector(togglePlayback(_:)), " ", []))
         picture.addItem(.separator())
         picture.addItem(item("Rotate Clockwise", #selector(rotateClockwise(_:)), "r", [.command]))
         picture.addItem(item("Rotate Counterclockwise", #selector(rotateCounterclockwise(_:)), "r", [.command, .shift]))

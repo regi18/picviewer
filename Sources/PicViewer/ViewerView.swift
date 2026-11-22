@@ -1,4 +1,5 @@
 import AppKit
+import AVKit
 import SwiftUI
 
 struct ViewerView: View {
@@ -76,7 +77,9 @@ private struct ImageCanvas: View {
 
     @ViewBuilder
     private var content: some View {
-        if let image = model.image {
+        if let player = model.player {
+            FilmView(player: player)
+        } else if let image = model.image {
             GeometryReader { geometry in
                 // Fit the window, but never blow a small picture up past its real size.
                 let natural = CGSize(width: CGFloat(image.width) / displayScale, height: CGFloat(image.height) / displayScale)
@@ -88,7 +91,8 @@ private struct ImageCanvas: View {
                     .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
             }
         } else if model.loadFailed {
-            ContentUnavailableView("Can't Open This Picture", systemImage: "exclamationmark.triangle",
+            ContentUnavailableView(model.currentIsVideo ? "Can't Play This Film" : "Can't Open This Picture",
+                                   systemImage: "exclamationmark.triangle",
                                    description: Text(model.current?.lastPathComponent ?? ""))
         } else if model.folder == nil {
             VStack(spacing: 14) {
@@ -133,5 +137,28 @@ private struct ImageCanvas: View {
                 NSCursor.setHiddenUntilMouseMoves(true)
             }
         }
+    }
+}
+
+/// A film, with the system's own floating playback controls, like Quick Look and QuickTime Player.
+private struct FilmView: NSViewRepresentable {
+    let player: AVPlayer
+
+    func makeNSView(context: Context) -> AVPlayerView {
+        let view = AVPlayerView()
+        view.controlsStyle = .floating
+        view.videoGravity = .resizeAspect
+        view.showsFullScreenToggleButton = false
+        view.allowsPictureInPicturePlayback = false
+        view.player = player
+        return view
+    }
+
+    func updateNSView(_ view: AVPlayerView, context: Context) {
+        if view.player !== player { view.player = player }
+    }
+
+    static func dismantleNSView(_ view: AVPlayerView, coordinator: ()) {
+        view.player = nil
     }
 }

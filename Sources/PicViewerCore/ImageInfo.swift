@@ -43,6 +43,14 @@ public struct ImageInfo: Sendable, Equatable {
     public var artist: String?
     public var copyright: String?
 
+    // Films only.
+    public var isVideo = false
+    public var duration: Double?
+    public var frameRate: Double?
+    public var codec: String?
+    /// How far the film's matrix turns it on screen, clockwise, in degrees: 0, 90, 180 or -90.
+    public var videoRotation: Int?
+
     public init(url: URL) throws {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
@@ -163,7 +171,7 @@ public struct ImageInfo: Sendable, Equatable {
          "Mirrored, rotated 90° CW", "Rotated 90° CCW"][max(0, min(7, orientation - 1))]
     }
 
-    /// 46.3625, 14.0936 -> "46.3625° N, 14.0936° E".
+    /// 37.3349, -122.009 -> "37.33490° N, 122.00900° W".
     public static func coordinateLabel(latitude: Double, longitude: Double) -> String {
         let format = FloatingPointFormatStyle<Double>.number.precision(.fractionLength(5))
         return "\(abs(latitude).formatted(format))° \(latitude < 0 ? "S" : "N"), \(abs(longitude).formatted(format))° \(longitude < 0 ? "W" : "E")"
@@ -203,7 +211,7 @@ public struct ImageInfo: Sendable, Equatable {
     }
 
     /// "Canon" and "Canon EOS R5" -> "Canon EOS R5", since most cameras repeat the make in the model.
-    /// "NIKON CORPORATION" and "NIKON D750" -> "NIKON D750"; "OLYMPUS IMAGING CORP." and "E-M1" -> "OLYMPUS E-M1".
+    /// "SEIKO EPSON CORP." and "R-D1" -> "SEIKO EPSON R-D1"; "OLYMPUS IMAGING CORP." and "E-M1" -> "OLYMPUS E-M1".
     static func joined(_ make: String?, _ model: String?) -> String? {
         let corporate: Set<String> = ["corporation", "corp", "corp.", "imaging", "company", "co.", "co.,", "ltd", "ltd.",
                                       "inc", "inc.", "optical", "electronics", "electric"]

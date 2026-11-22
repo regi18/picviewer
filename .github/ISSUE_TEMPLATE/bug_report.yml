@@ -26,7 +26,7 @@ body:
     id: camera
     attributes:
       label: Camera or file type
-      description: For rotation or info problems, the camera that took the picture and the file type, like Fujifilm X-T30 II JPEG or RAF.
+      description: For rotation or info problems, the camera that took the picture and the file type, like a Canon EOS R6 JPEG or a Sony ARW.
   - type: input
     id: version
     attributes:

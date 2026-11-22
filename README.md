@@ -6,7 +6,7 @@
 
 **A tiny picture viewer for your Mac that browses in the same order as Finder.**
 
-Open a picture, then flip through its folder with the arrow keys. Rotate without losing quality, trash what you don't want, and nothing else.
+Open a picture, then flip through its folder with the arrow keys. Films in the folder play in line. Rotate without losing quality, trash what you don't want, and nothing else.
 
 ![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black?logo=apple)
 ![Swift](https://img.shields.io/badge/Swift-native-F05138?logo=swift&logoColor=white)
@@ -28,12 +28,13 @@ Preview doesn't step through the pictures in a folder: it only knows the files y
 | Key | Action |
 | --- | --- |
 | ← / → | Previous / next picture |
+| Space | Play / pause a film |
 | ⌘R / ⇧⌘R | Rotate clockwise / counter-clockwise |
 | ⌘⌫ | Move to Trash (⌘Z puts it back) |
 | ⌘I | Show or hide the info sidebar |
 | ⌃⌘F or double-click | Full screen |
 | ⌥⌘R | Show in Finder |
-| ⌘O | Open a picture or folder |
+| ⌘O | Open a picture, film or folder |
 
 ## Install
 
@@ -54,6 +55,8 @@ The first time you open a picture, macOS asks whether PicViewer may **control Fi
 **Lossless rotation.** Only the orientation flag changes: the EXIF orientation tags, XMP `tiff:Orientation` and the HEIF `irot` box are overwritten in place. Usually 1 to 3 bytes change and the file size stays the same. After writing, the file is read back to check the result, and if anything doesn't match, the original bytes go back. PNG files have no orientation flag, so they're re-written only if the decoded pixels come out bit-for-bit identical. If there's no lossless way, the rotation is refused and the file isn't touched.
 
 **Turning the pixels.** Some apps and websites ignore the orientation flag. In Settings… (⌘,) you can choose **Rotate pictures by: Turning the pixels** instead. For JPEGs, PicViewer then rearranges the compressed 8×8 blocks directly, like `jpegtran -perfect`, so the picture is never decoded or re-compressed. The EXIF thumbnail and any embedded previews turn too, and the orientation flag is set back to normal. Before the file is overwritten in place, the result is checked twice: the compressed data is decoded again and compared block by block, and macOS renders it to make sure it looks right. The modification date is kept. If a JPEG can't be turned this way without losing an edge (its size isn't a multiple of the block size) or uses an unusual encoding (progressive), PicViewer says so and changes the flag instead. Other formats (RAW, HEIC, PNG) always use the flag.
+
+**Films.** MOV and MP4 files rotate the same way: only the display matrix in the video track's header changes (36 bytes, overwritten in place), which is what a phone sets when you film upright. QuickTime, browsers, ffmpeg and Immich all follow it. The frames are never re-encoded, the file size stays the same, and the result is read back and checked before it's kept. The Turning the pixels setting doesn't apply to films.
 
 ## Limitations
 
